@@ -795,12 +795,12 @@ section '.rsrc' resource data readable
                  56, LANG_NEUTRAL, explosion,\
                  57, LANG_NEUTRAL, explosionmask
 
-bitmap pict,'DDRAW.bmp'
-bitmap pict2,'tankk.bmp'
-bitmap walls_pict,'walls.bmp'
-bitmap ground, 'ground.bmp'
-bitmap pula, 'bullet.bmp'
-bitmap explosion, 'explosion.bmp'
-bitmap explosionmask, 'explosionmask.bmp'
-icon main_icon,icon_48,'bomb.ico'
-cursor main_cursor,cursor_data,'Arrow.cur'
+bitmap pict,'../work_space/DDRAW.bmp'
+bitmap pict2,'../work_space/tankk.bmp'
+bitmap walls_pict,'../work_space/walls.bmp'
+bitmap ground, '../work_space/ground.bmp'
+bitmap pula, '../work_space/bullet.bmp'
+bitmap explosion, '../work_space/explosion.bmp'
+bitmap explosionmask, '../work_space/explosionmask.bmp'
+icon main_icon,icon_48,'../work_space/bomb.ico'
+cursor main_cursor,cursor_data,'../work_space/Arrow.cur'
