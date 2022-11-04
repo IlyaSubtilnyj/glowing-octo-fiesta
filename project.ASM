@@ -3,6 +3,13 @@ entry start
 
 include 'win32a.inc'
 
+struct TANK
+speedx dd ?
+cooX dd ?
+cooY dd ?
+direction dd ?
+ends
+
 min_X = 0
 max_X = 88
 min_Y = 0
@@ -12,6 +19,7 @@ _GROUND = 60
 _PULA = 61
 _BRICK = 1
 _TIMERID = 4
+_TIMERID2 = 5
 
 _UP = 0
 _DOWN = 2
@@ -26,6 +34,7 @@ _BLOCKWIDTH = 30
 _TANKID = 1
 _TIMERIDEXPLOSION = 2
 _BULLETID = 2
+_ENEMYID = 5
 
 section '.data' data readable writeable
 
@@ -41,6 +50,7 @@ ps PAINTSTRUCT
 
 hBitmap dd ?
 hBitmapTank dd ?
+hBitmapEnemy1 dd ?
 hBitmapWalls dd ?
 hBitmapGround dd ?
 hBitmapPula dd ?
@@ -65,6 +75,7 @@ frame db 0
 
 dst_X dd 150
 dst_Y dd 60
+src_X_explosion dd 0
 is_bullet_exists db 0
 bullet_X dd ?
 bullet_Y dd ?
@@ -75,8 +86,9 @@ blockWereCollapsed dd 2 dup(0)
 rect RECT
 
 bufMap db 4 dup(1), 0, 0, 4 dup(1), 20 dup(0), 4 dup(1), 0, 0, 4 dup(1), 60 dup(1)
-
-numberBitestoRead dw ?
+enemy1 TANK 3, 0, 30, _RIGHT
+st_ SYSTEMTIME
+Random.wPrevNumber      dd      ?
 
 section '.code' code readable executable
 
@@ -125,11 +137,7 @@ proc WindowProc hwnd,wmsg,wparam,lparam
      cmp eax, WM_LBUTTONDOWN
      jne @f
      mov [is_shot], 1
-@@:
-     cmp eax,WM_TIMER
-     jne @f
-     cmp [wparam], _TIMERID
-     je .wmtimer
+     jmp .finish
 @@:
      cmp eax,WM_PAINT
      je .wmpaint
@@ -143,6 +151,7 @@ proc WindowProc hwnd,wmsg,wparam,lparam
         mov [hBitmap],eax
         invoke LoadBitmap,[wc.hInstance],38
         mov [hBitmapTank],eax
+        mov [hBitmapEnemy1],eax
         invoke LoadBitmap,[wc.hInstance],_WALLS
         mov [hBitmapWalls],eax
         invoke LoadBitmap,[wc.hInstance],_GROUND
@@ -151,131 +160,9 @@ proc WindowProc hwnd,wmsg,wparam,lparam
         mov [hBitmapPula],eax
         invoke LoadBitmap,[wc.hInstance],56
         mov [hBitmapExplosion],eax
-        invoke LoadBitmap,[wc.hInstance],57
-        mov [hBitmapExplosionMask],eax
-        invoke SetTimer,[hwnd], _TIMERID, 28, NULL ;set timer
-        jmp .finish
-
-.wmtimer:
-;обработчик пули поместить после процедуры таймера!!!потомучто пуля отрисовывается за границами карты
-;доделать обработуик проверки на нраницы карты, переименовать его!!!
-;добавить идентификатор танку и пуле
-        cmp [is_bullet_exists], 1
-        jz .checkbullet
-        cmp [is_shot], 1
-        jnz .nextkey
-        mov [is_bullet_exists], 1
-        stdcall setBulletCoordinates
-        jmp .isnew
-.checkbullet:
-        stdcall objectMove, _BULLETID, [bullet_direction]
-.isnew:
-        stdcall borderCollisionCheck, _BULLETID, [bullet_direction]
-        test eax, eax
-        jz .deletebullet
-        stdcall blockCollisionCheckMain, [bullet_X], [bullet_Y], [bullet_direction], _BULLETID
-        ;функция уничтожения блоков
-        stdcall deleteCollapsedBlocks, eax
-        test eax, eax
-        jnz .deletebullet
-        jmp .nextkey
-.deletebullet:
-        mov [is_bullet_exists], 0
-        mov [is_bullet_explosion], 1
-        cmp [bullet_direction], 5
-        jg .leftright
-        mov eax, [bullet_X]
-        sub eax, 11
-        mov [explosion_X], eax
-        mov eax, [bullet_Y]
-        sub eax, 15
-        mov [explosion_Y], eax
-        jmp .nextkey
-.leftright:
-        mov eax, [bullet_Y]
-        sub eax, 11
-        mov [explosion_Y], eax
-        mov eax, [bullet_X]
-        sub eax, 15
-        mov [explosion_X], eax
-.nextkey:
-        mov [is_shot], 0
-        invoke GetKeyState,'W'
-        cmp eax, 1
-        jbe .keyS
-        stdcall chooseTankPos,_UP
-        stdcall borderCollisionCheck, _TANKID, _UP
-        test eax, eax
-        jz .endKeyW
-        mov eax, [dst_Y]
-        sub eax, _SPEED
-        stdcall blockCollisionCheckMain, [dst_X], eax, _UP, _TANKID
-        cmp eax, 1
-        jg .endKeyW
-        test eax, eax
-        jz @f
-        stdcall movementCorrection, _UP
-        test eax, eax
-        jnz .endKeyW
-@@:
-        stdcall objectMove, _TANKID, _UP
-.endKeyW:
-        mov [tank_direction], _UP
-        jmp .sendDrawMes
-.keyS:
-        invoke GetKeyState,'S'
-        cmp eax, 1
-        jbe @f
-        stdcall chooseTankPos,_DOWN
-        mov [tank_direction], _DOWN ;поменять
-        stdcall borderCollisionCheck, _TANKID, _DOWN
-        test eax, eax
-        jz .sendDrawMes
-        mov eax, [dst_Y]
-        add eax, _SPEED
-        stdcall blockCollisionCheckMain, [dst_X], eax, _DOWN, _TANKID
-        test eax, eax
-        jnz .sendDrawMes
-        stdcall objectMove, _TANKID, _DOWN
-        jmp .sendDrawMes
-@@:
-        invoke GetKeyState,'A'
-        cmp eax, 1
-        jbe @f
-        stdcall chooseTankPos,_LEFT
-        mov [tank_direction], _LEFT
-        stdcall borderCollisionCheck, _TANKID, _LEFT
-        test eax, eax
-        jz .sendDrawMes
-        stdcall movementCorrection, _LEFT
-        mov eax, [dst_X]
-        sub eax, _SPEED
-        stdcall blockCollisionCheckMain, eax, [dst_Y], _LEFT, _TANKID
-        test eax, eax
-        jnz .sendDrawMes
-        stdcall objectMove, _TANKID, _LEFT
-
-        jmp .sendDrawMes
-@@:
-        invoke GetKeyState,'D'
-        cmp eax, 1
-        jbe .sendDrawMes
-        stdcall chooseTankPos,_RIGHT
-        mov [tank_direction], _RIGHT
-        stdcall borderCollisionCheck, _TANKID, _RIGHT
-        test eax, eax
-        jz .sendDrawMes
-        mov eax, [dst_X]
-        add eax, _SPEED
-        stdcall blockCollisionCheckMain, eax, [dst_Y], _RIGHT, _TANKID
-        test eax, eax
-        jnz .sendDrawMes
-        stdcall objectMove, _TANKID, _RIGHT
-
-
-.sendDrawMes:
-;перемещение выполнено
-        invoke InvalidateRect,[hwnd],NULL,FALSE ;Sends WM_PAINT to window's procedure message processing and some information into PAINSTRUCT
+        stdcall createBitmapMask, eax, 0
+        mov [hBitmapExplosionMask], eax
+        invoke SetTimer,[hwnd], _TIMERID, 28, TimerProcedure ;set timer
         jmp .finish
 .wmpaint:
         invoke BeginPaint,[hwnd], ps ;Begin painting returns handle to context device -> next line
@@ -299,30 +186,17 @@ proc WindowProc hwnd,wmsg,wparam,lparam
 
         invoke SelectObject, [hMemDC], [hBitmapTank]
         invoke BitBlt, [hdc], [dst_X], [dst_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], [src_X], [src_Y], SRCCOPY
+        invoke SelectObject, [hMemDC], [hBitmapEnemy1]
+        invoke BitBlt, [hdc], [enemy1.cooX], [enemy1.cooY], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], 180, 0, SRCCOPY
 ;рисую взрыв
         cmp [is_bullet_explosion], 0
-        je .next
-        cmp [is_bullet_explosion], 2
-        jg .null
-        jz @f
-        mov eax, 0
-        jmp .paint
-@@:
-        mov eax, _BLOCKWIDTH
-
-.paint:
-        push eax
+        jz .next
         invoke SelectObject, [hMemDC], [hBitmapExplosionMask]
-        pop eax
-        push eax
-        invoke BitBlt, [hdc], [explosion_X], [explosion_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], eax, 0, SRCAND
+
+        invoke BitBlt, [hdc], [explosion_X], [explosion_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], [src_X_explosion], 0, SRCAND
         invoke SelectObject, [hMemDC], [hBitmapExplosion]
-        pop eax
-        invoke BitBlt, [hdc], [explosion_X], [explosion_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], eax, 0, SRCPAINT
-        inc [is_bullet_explosion]
-        jmp .next
-.null:
-        mov [is_bullet_explosion], 0
+
+        invoke BitBlt, [hdc], [explosion_X], [explosion_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], [src_X_explosion], 0, SRCPAINT
 ;отрисовал взрыв
 .next:
         ;рисую пулю
@@ -368,6 +242,246 @@ proc WindowProc hwnd,wmsg,wparam,lparam
         ret
 endp
 
+proc TimerProcedure2, hwnd, uMsg, idEvent, dwTime: DWORD
+     cmp [is_bullet_explosion], 0
+     jz .setexplosion
+     cmp [is_bullet_explosion], 1
+     jz @f
+     mov [is_bullet_explosion], 0
+     invoke KillTimer, [hwnd], [idEvent]
+     jmp .end
+@@:
+     ;realization
+     inc [is_bullet_explosion]
+     mov [src_X_explosion], _BLOCKWIDTH
+     jmp .end
+.setexplosion:
+     mov [is_bullet_explosion], 1
+     mov [src_X_explosion], 0
+.end:
+     invoke InvalidateRect,[hwnd],NULL,FALSE
+     ret
+endp
+
+proc checkKeyToMove, tank_X, tank_Y, new_direction
+        stdcall chooseTankPos, [new_direction]
+        stdcall borderCollisionCheck, _TANKID, [new_direction]
+        test eax, eax
+        jz .endKey
+        cmp [new_direction], _UP
+        jnz @f
+        sub [tank_Y], _SPEED
+        jmp .blockCollision
+@@:
+        cmp [new_direction], _DOWN
+        jnz @f
+        add [tank_Y], _SPEED
+        jmp .blockCollision
+@@:
+        cmp [new_direction], _LEFT
+        jnz @f
+        sub [tank_X], _SPEED
+        jmp .blockCollision
+@@:
+        add [tank_X], _SPEED
+.blockCollision:
+        stdcall blockCollisionCheckMain, [tank_X], [tank_Y], [new_direction], _TANKID
+        cmp eax, 1
+        jg .endKey
+        test eax, eax
+        jz @f
+        stdcall movementCorrection, [new_direction]
+        test eax, eax
+        jnz .endKey
+@@:
+        stdcall objectMove, _TANKID, [new_direction]
+.endKey:
+        mov eax, [new_direction]
+        mov [tank_direction], al
+     ret
+endp
+
+proc bulletMove
+        cmp [is_bullet_exists], 0
+        jnz .checkbullet
+        cmp [is_shot], 0
+        jz .nextkey
+        stdcall setBulletCoordinates
+        jmp .isnew
+.checkbullet:
+        stdcall objectMove, _BULLETID, [bullet_direction]
+.isnew:
+        stdcall borderCollisionCheck, _BULLETID, [bullet_direction]
+        test eax, eax
+        jz .deletebullet
+        stdcall blockCollisionCheckMain, [bullet_X], [bullet_Y], [bullet_direction], _BULLETID
+        ;функция уничтожения блоков
+        stdcall deleteCollapsedBlocks, eax
+        test eax, eax
+        jnz .deletebullet
+        jmp .nextkey
+.deletebullet:
+        mov [is_bullet_exists], 0
+        invoke SetTimer,[hwnd], _TIMERID2, 60, TimerProcedure2 ;set timer
+        cmp [bullet_direction], 5
+        jg .leftright
+        mov eax, [bullet_X]
+        sub eax, 11
+        mov [explosion_X], eax
+        mov eax, [bullet_Y]
+        sub eax, 15
+        mov [explosion_Y], eax
+        jmp .nextkey
+.leftright:
+        mov eax, [bullet_Y]
+        sub eax, 11
+        mov [explosion_Y], eax
+        mov eax, [bullet_X]
+        sub eax, 15
+        mov [explosion_X], eax
+.nextkey:
+        mov [is_shot], 0
+        ret
+endp
+
+proc moveEnemy uses ebx
+     stdcall borderCollisionCheck, _ENEMYID, [enemy1.direction]
+     test eax, eax
+     jz .setNewDirection
+     mov ebx, [enemy1.speedx]
+     mov eax, [enemy1.cooX]
+     mov edx, [enemy1.cooY]
+     cmp [enemy1.direction], _UP
+     jnz @f
+     sub edx, ebx
+     jmp .end
+@@:
+     cmp [enemy1.direction], _DOWN
+     jnz @f
+     add edx, ebx
+     jmp .end
+@@:
+     cmp [enemy1.direction], _LEFT
+     jnz @f
+     sub eax, ebx
+     jmp .end
+@@:
+     add eax, ebx
+.end:
+     stdcall blockCollisionCheckMain, eax, edx, [enemy1.direction], _ENEMYID
+     test eax, eax
+     jnz .setNewDirection
+     stdcall objectMove, _ENEMYID, [enemy1.direction]
+     jmp .endd
+.setNewDirection:
+     stdcall Random.Initialize
+     stdcall Random.Get, 1, 4
+     cmp eax, 1
+     jne @f
+     mov [enemy1.direction], _UP
+     jmp .endd
+@@:
+     cmp eax, 2
+     jne @f
+     mov [enemy1.direction], _DOWN
+     jmp .endd
+@@:
+     cmp eax, 3
+     jne @f
+     mov [enemy1.direction], _LEFT
+     jmp .endd
+@@:
+     mov [enemy1.direction], _RIGHT
+.endd:
+     ret
+endp
+
+proc Random.Initialize
+        invoke GetLocalTime, st_
+        movzx eax, [st_.wSecond]
+        add ax, [st_.wMilliseconds]
+        mov [Random.wPrevNumber], eax
+        ret
+endp
+
+proc Random.Get,\
+     wMin, wMax
+     mov        eax, [Random.wPrevNumber]
+     ;indide possible calculations to upgrade the propability of getting the specific
+     ;reminder of devision
+     ;mov        [Random.wPrevNumber], eax
+     mov        ecx, [wMax]
+     sub        ecx, [wMin]
+     inc        ecx
+     xor        edx, edx
+     div        ecx
+     add        edx, [wMin]
+     mov        eax, edx
+     ret
+endp
+
+
+proc TimerProcedure, hwnd, uMsg, idEvent, dwTime: DWORD
+        stdcall moveEnemy
+        stdcall bulletMove
+        invoke GetKeyState,'W'
+        cmp eax, 1
+        jbe .keyS
+        stdcall checkKeyToMove, [dst_X], [dst_Y], _UP
+        jmp .sendDrawMes
+.keyS:
+        invoke GetKeyState,'S'
+        cmp eax, 1
+        jbe .keyA
+        stdcall checkKeyToMove, [dst_X], [dst_Y], _DOWN
+        jmp .sendDrawMes
+.keyA:
+        invoke GetKeyState,'A'
+        cmp eax, 1
+        jbe .keyD
+        stdcall checkKeyToMove, [dst_X], [dst_Y], _LEFT
+        jmp .sendDrawMes
+.keyD:
+        invoke GetKeyState,'D'
+        cmp eax, 1
+        jbe .sendDrawMes
+        stdcall checkKeyToMove, [dst_X], [dst_Y], _RIGHT
+.sendDrawMes:
+;перемещение выполнено
+        invoke InvalidateRect,[hwnd],NULL,FALSE ;Sends WM_PAINT to window's procedure message processing and some information into PAINSTRUCT
+.end:
+     ret
+endp
+
+proc createBitmapMask, hbmColour, crTransparent
+locals
+ hbmMask dd ?
+ hdcMem dd ?
+ hdcMem2 dd ?
+endl
+     invoke CreateBitmap, _BLOCKWIDTH, _BLOCKWIDTH, 1, 1, NULL
+     mov [hbmMask], eax
+
+     invoke CreateCompatibleDC, 0
+     mov [hdcMem], eax
+     invoke CreateCompatibleDC, 0
+     mov [hdcMem2], eax
+
+     invoke SelectObject, [hdcMem], [hbmColour]
+     invoke SelectObject, [hdcMem2], [hbmMask]
+
+     invoke SetBkColor, [hdcMem], [crTransparent]
+
+     invoke BitBlt, [hdcMem2], 0, 0, _BLOCKWIDTH, _BLOCKWIDTH, [hdcMem], 0, 0, SRCCOPY
+     invoke BitBlt, [hdcMem], 0, 0, _BLOCKWIDTH, _BLOCKWIDTH, [hdcMem2], 0, 0, SRCINVERT
+
+     invoke DeleteDC, [hdcMem]
+     invoke DeleteDC, [hdcMem2]
+
+     mov eax, [hbmMask]
+     ret
+endp
+
 proc movementCorrection, new_direction
 locals
  mindistdiff dd 24 ;from 30 - TANKWIDTH
@@ -385,7 +499,7 @@ endl
      jg .failend
 .true:
      cmp [tank_direction], 3
-     jl .failend
+     jl .vertical
      mov eax, [blockWereCollapsed]
      div byte[ten]
      mov bl, ah
@@ -394,22 +508,48 @@ endl
      mov [cur_block_co], eax
      sub eax, [dst_X]
      cmp eax, 0
-     jg @f
+     jg .g
+@@:
      not eax
      inc eax
-@@:
      cmp eax, [mindistdiff]
      jl .failend
-     cmp [tank_direction], _RIGHT
-     jnz @f
      mov eax, [cur_block_co]
      add eax, _BLOCKWIDTH
      mov [dst_X], eax
      jmp .end
-@@:
+.g:
+     cmp eax, [mindistdiff]
+     jl .failend
      mov eax, [cur_block_co]
      sub eax, _BLOCKWIDTH
      mov [dst_X], eax
+     jmp .end
+.vertical:
+     mov eax, [blockWereCollapsed]
+     div byte[ten]
+     mov bl, al
+     mov eax, _BLOCKWIDTH
+     mul bl
+     mov [cur_block_co], eax
+     sub eax, [dst_Y]
+     cmp eax, 0
+     jg .vg
+@@:
+     not eax
+     inc eax
+     cmp eax, [mindistdiff]
+     jl .failend
+     mov eax, [cur_block_co]
+     add eax, _BLOCKWIDTH
+     mov [dst_Y], eax
+     jmp .end
+.vg:
+     cmp eax, [mindistdiff]
+     jl .failend
+     mov eax, [cur_block_co]
+     sub eax, _BLOCKWIDTH
+     mov [dst_Y], eax
      jmp .end
 .failend:
      mov eax, -1
@@ -438,6 +578,7 @@ proc deleteCollapsedBlocks, countofblocks
 endp
 
 proc setBulletCoordinates
+        mov [is_bullet_exists], 1
         cmp [tank_direction], _UP
         jne @f
         mov [bullet_direction], _UP
@@ -503,7 +644,7 @@ endl
         jmp .nextstep
 .nextid:
         cmp [elementid], _BULLETID
-        jne .endMove
+        jne .nextsecid
         mov [width], _BULLETWIDTH
         cmp [direction], 4
         jge @f
@@ -513,7 +654,17 @@ endl
 @@:
         mov eax, [bullet_X]
         mov [curposition], eax
-
+        jmp .nextstep
+.nextsecid:
+        mov [width], _BLOCKWIDTH
+        cmp [direction], 4
+        jge @f
+        mov eax, [enemy1.cooY]
+        mov [curposition], eax
+        jmp .nextstep
+@@:
+        mov eax, [enemy1.cooX]
+        mov [curposition], eax
 .nextstep:
         mov eax, [direction]
         div [four]
@@ -534,7 +685,8 @@ endl
         ret
 endp
 
-proc blockCollisionCheckMain uses ebx, ltx, lty, direction, elementid  ;returns the number of block were collapsed
+proc blockCollisionCheckMain uses ebx,\
+                             ltx, lty, direction, elementid  ;returns the number of block were collapsed
 locals
  rtx dd ?
  rty dd ?
@@ -544,8 +696,11 @@ locals
  oppCornerDistBullet dd 7
  oppCornerDist dd ?
 endl
+     cmp [elementid], _ENEMYID
+     jz .tanksid
      cmp [elementid], _TANKID
      jnz .bulletid
+.tanksid:
      mov eax, [oppCornerDistTank]
      mov [oppCornerDist], eax
      jmp .next
@@ -584,6 +739,13 @@ endl
 endp
 
 proc objectMove, elementid, direction
+     cmp [elementid], _ENEMYID
+     jnz .uptank
+     cmp [direction], _UP
+     jnz .downenemy
+     sub [enemy1.cooY], _SPEED ;must be set to [enemy1.speedx]
+     jmp .endMove
+.uptank:
      cmp [elementid], _TANKID
      jnz .upbullet
      cmp [direction], _UP
@@ -595,6 +757,11 @@ proc objectMove, elementid, direction
      jnz .downbullet
      sub [bullet_Y], _BULLETSPEED
      jmp .endMove
+.downenemy:
+     cmp [direction], _DOWN
+     jnz .leftenemy
+     add [enemy1.cooY], _SPEED
+     jmp .endMove
 .downtank:
      cmp [direction], _DOWN
      jnz .lefttank
@@ -605,6 +772,11 @@ proc objectMove, elementid, direction
      jnz .leftbullet
      add [bullet_Y], _BULLETSPEED
      jmp .endMove
+.leftenemy:
+     cmp [direction], _LEFT
+     jnz .rightenemy
+     sub [enemy1.cooX], _SPEED
+     jmp .endMove
 .lefttank:
      cmp [direction], _LEFT
      jnz .righttank
@@ -614,6 +786,9 @@ proc objectMove, elementid, direction
      cmp [direction], _LEFT
      jnz .rightbullet
      sub [bullet_X], _BULLETSPEED
+     jmp .endMove
+.rightenemy:
+     add [enemy1.cooX], _SPEED
      jmp .endMove
 .righttank:
      add [dst_X], _SPEED
@@ -792,15 +967,13 @@ section '.rsrc' resource data readable
                  _WALLS,LANG_NEUTRAL,walls_pict,\
                  _GROUND,LANG_NEUTRAL,ground,\
                  _PULA,LANG_NEUTRAL,pula,\
-                 56, LANG_NEUTRAL, explosion,\
-                 57, LANG_NEUTRAL, explosionmask
+                 56, LANG_NEUTRAL, explosion
 
-bitmap pict,'../work_space/DDRAW.bmp'
-bitmap pict2,'../work_space/tankk.bmp'
-bitmap walls_pict,'../work_space/walls.bmp'
-bitmap ground, '../work_space/ground.bmp'
-bitmap pula, '../work_space/bullet.bmp'
-bitmap explosion, '../work_space/explosion.bmp'
-bitmap explosionmask, '../work_space/explosionmask.bmp'
-icon main_icon,icon_48,'../work_space/bomb.ico'
-cursor main_cursor,cursor_data,'../work_space/Arrow.cur'
+bitmap pict,'DDRAW.bmp'
+bitmap pict2,'tankk.bmp'
+bitmap walls_pict,'walls.bmp'
+bitmap ground, 'ground.bmp'
+bitmap pula, 'bullet.bmp'
+bitmap explosion, 'explosion.bmp'
+icon main_icon,icon_48,'bomb.ico'
+cursor main_cursor,cursor_data,'Arrow.cur'
