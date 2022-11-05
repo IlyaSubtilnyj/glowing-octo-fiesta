@@ -3,13 +3,6 @@ entry start
 
 include 'win32a.inc'
 
-struct TANK
-speedx dd ?
-cooX dd ?
-cooY dd ?
-direction dd ?
-ends
-
 min_X = 0
 max_X = 88
 min_Y = 0
@@ -35,6 +28,49 @@ _TANKID = 1
 _TIMERIDEXPLOSION = 2
 _BULLETID = 2
 _ENEMYID = 5
+_ENEMYAMOUNT = 4
+
+struct TANK
+        speedx dd ?
+        cooX dd ?
+        cooY dd ?
+        direction dd ?
+        amOccupiedBl dd ?
+        occupiedBloks dd 2 dup(?)
+ends
+
+struct TANKMAS
+       rept 4 counter {tanksequent#counter db 0}
+       rept 4 counter {enemy#counter TANK ?}
+ends
+
+macro initEnemy ordinalNum, isexists, speed, coox, cooy, direction, amOccupiedBl, oc1, oc2 {
+      mov [enemyMas.tanksequent#ordinalNum], isexists
+      mov [enemyMas.enemy#ordinalNum#.speedx], speed
+      mov [enemyMas.enemy#ordinalNum#.cooX], coox
+      mov [enemyMas.enemy#ordinalNum#.cooY], cooy
+      mov [enemyMas.enemy#ordinalNum#.direction], direction
+      mov [enemyMas.enemy#ordinalNum#.amOccupiedBl], amOccupiedBl
+      mov [enemyMas.enemy#ordinalNum#.occupiedBloks], oc1
+      mov [enemyMas.enemy#ordinalNum#.occupiedBloks+4], oc2
+}
+
+macro initEnemySimplified ordinalNum{
+      mov ecx, [enemyMas.enemy#ordinalNum#.amOccupiedBl]
+@@:
+      mov ebx, [enemyMas.enemy#ordinalNum#.occupiedBloks+ecx*4-4]
+      mov byte[bufMap+ebx], 0
+      loop @b
+      mov eax, [a]
+      mov [enemyMas.enemy#ordinalNum#.amOccupiedBl], eax
+      mov ebx, [b]
+      mov [enemyMas.enemy#ordinalNum#.occupiedBloks], ebx
+      mov byte[bufMap+ebx*1], 0
+      mov ebx, [b+4]
+      mov [enemyMas.enemy#ordinalNum#.occupiedBloks+4], ebx
+      mov byte[bufMap+ebx*1], 0
+      mov [a], 0
+}
 
 section '.data' data readable writeable
 
@@ -47,7 +83,6 @@ wc WNDCLASS 0,WindowProc,0,0,NULL,NULL,NULL,COLOR_WINDOWTEXT,NULL,_class
 
 msg MSG
 ps PAINTSTRUCT
-
 hBitmap dd ?
 hBitmapTank dd ?
 hBitmapEnemy1 dd ?
@@ -82,32 +117,34 @@ bullet_Y dd ?
 explosion_X dd ?
 explosion_Y dd ?
 blockWereCollapsed dd 2 dup(0)
+enemyMas TANKMAS
 
 rect RECT
 
 bufMap db 4 dup(1), 0, 0, 4 dup(1), 20 dup(0), 4 dup(1), 0, 0, 4 dup(1), 60 dup(1)
-enemy1 TANK 3, 0, 30, _RIGHT
 st_ SYSTEMTIME
 Random.wPrevNumber      dd      ?
+
+a dd 0
+b dd 2 dup(?)
 
 section '.code' code readable executable
 
 start:
+        invoke GetModuleHandle,0
+        mov [wc.hInstance],eax
+        invoke LoadIcon,[wc.hInstance],17
+        mov [wc.hIcon],eax
+        invoke LoadCursor,[wc.hInstance],27
+        mov [wc.hCursor],eax
+        invoke RegisterClass,wc
+        test eax,eax
+        jz error
 
-invoke GetModuleHandle,0
-mov [wc.hInstance],eax
-invoke LoadIcon,[wc.hInstance],17
-mov [wc.hIcon],eax
-invoke LoadCursor,[wc.hInstance],27
-mov [wc.hCursor],eax
-invoke RegisterClass,wc
-test eax,eax
-jz error
-
-invoke CreateWindowEx,0,_class,_title,WS_VISIBLE+WS_DLGFRAME+ WS_SYSMENU,128,128,600,600,NULL,NULL,[wc.hInstance],NULL
-mov [hwnd], eax
-test eax,eax
-jz error
+        invoke CreateWindowEx,0,_class,_title,WS_VISIBLE+WS_DLGFRAME+ WS_SYSMENU,128,128,600,600,NULL,NULL,[wc.hInstance],NULL
+        mov [hwnd], eax
+        test eax,eax
+        jz error
         ;invoke CreateFile, _fileName, GENERIC_READ+GENERIC_WRITE, FILE_SHARE_READ+FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_ARCHIVE, 0
         ;invoke CreateFile, _fileName, GENERIC_READ, FILE_SHARE_READ+FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_ARCHIVE, 0
         ;mov [hFileMap], eax
@@ -183,12 +220,18 @@ proc WindowProc hwnd,wmsg,wparam,lparam
 
         stdcall fillMap
         invoke BitBlt, [hdc], 0, 0, _MAPWIDTH, _MAPWIDTH, [hMemDC], 0, 0, SRCCOPY
-
+;draw tank and enemies
         invoke SelectObject, [hMemDC], [hBitmapTank]
         invoke BitBlt, [hdc], [dst_X], [dst_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], [src_X], [src_Y], SRCCOPY
         invoke SelectObject, [hMemDC], [hBitmapEnemy1]
-        invoke BitBlt, [hdc], [enemy1.cooX], [enemy1.cooY], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], 180, 0, SRCCOPY
-;рисую взрыв
+        rept 4 counter {
+             cmp [enemyMas.tanksequent#counter], 1
+             jne @f
+             invoke BitBlt, [hdc], [enemyMas.enemy#counter#.cooX], [enemyMas.enemy#counter#.cooY], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], 180, 0, SRCCOPY
+             @@:
+        }
+;end drawing
+;draw explosions
         cmp [is_bullet_explosion], 0
         jz .next
         invoke SelectObject, [hMemDC], [hBitmapExplosionMask]
@@ -197,7 +240,7 @@ proc WindowProc hwnd,wmsg,wparam,lparam
         invoke SelectObject, [hMemDC], [hBitmapExplosion]
 
         invoke BitBlt, [hdc], [explosion_X], [explosion_Y], _BLOCKWIDTH, _BLOCKWIDTH, [hMemDC], [src_X_explosion], 0, SRCPAINT
-;отрисовал взрыв
+;end drawing
 .next:
         ;рисую пулю
         cmp [is_bullet_exists], 1
@@ -265,7 +308,7 @@ endp
 
 proc checkKeyToMove, tank_X, tank_Y, new_direction
         stdcall chooseTankPos, [new_direction]
-        stdcall borderCollisionCheck, _TANKID, [new_direction]
+        stdcall borderCollisionCheck, _TANKID, [new_direction], [dst_X], [dst_Y]
         test eax, eax
         jz .endKey
         cmp [new_direction], _UP
@@ -294,7 +337,7 @@ proc checkKeyToMove, tank_X, tank_Y, new_direction
         test eax, eax
         jnz .endKey
 @@:
-        stdcall objectMove, _TANKID, [new_direction]
+        stdcall objectMove, _TANKID, [new_direction], 0
 .endKey:
         mov eax, [new_direction]
         mov [tank_direction], al
@@ -309,9 +352,9 @@ proc bulletMove
         stdcall setBulletCoordinates
         jmp .isnew
 .checkbullet:
-        stdcall objectMove, _BULLETID, [bullet_direction]
+        stdcall objectMove, _BULLETID, [bullet_direction], 0
 .isnew:
-        stdcall borderCollisionCheck, _BULLETID, [bullet_direction]
+        stdcall borderCollisionCheck, _BULLETID, [bullet_direction], [bullet_X], [bullet_Y]
         test eax, eax
         jz .deletebullet
         stdcall blockCollisionCheckMain, [bullet_X], [bullet_Y], [bullet_direction], _BULLETID
@@ -344,62 +387,110 @@ proc bulletMove
         ret
 endp
 
-proc moveEnemy uses ebx
-     stdcall borderCollisionCheck, _ENEMYID, [enemy1.direction]
+macro enemyMain ordinalNum {
+     cmp [enemyMas.tanksequent#ordinalNum], 1
+     jnz endd#ordinalNum
+     stdcall borderCollisionCheck, _ENEMYID, [enemyMas.enemy#ordinalNum#.direction],\
+                                   [enemyMas.enemy#ordinalNum#.cooX],\
+                                   [enemyMas.enemy#ordinalNum#.cooY]
      test eax, eax
-     jz .setNewDirection
-     mov ebx, [enemy1.speedx]
-     mov eax, [enemy1.cooX]
-     mov edx, [enemy1.cooY]
-     cmp [enemy1.direction], _UP
-     jnz @f
+     jz setNewDirection#ordinalNum
+     mov ebx, [enemyMas.enemy#ordinalNum#.speedx]
+     mov eax, [enemyMas.enemy#ordinalNum#.cooX]
+     mov edx, [enemyMas.enemy#ordinalNum#.cooY]
+     cmp [enemyMas.enemy#ordinalNum#.direction], _UP
+     jnz .down#ordinalNum
      sub edx, ebx
-     jmp .end
-@@:
-     cmp [enemy1.direction], _DOWN
-     jnz @f
-     add edx, ebx
-     jmp .end
-@@:
-     cmp [enemy1.direction], _LEFT
-     jnz @f
-     sub eax, ebx
-     jmp .end
-@@:
-     add eax, ebx
-.end:
-     stdcall blockCollisionCheckMain, eax, edx, [enemy1.direction], _ENEMYID
+     stdcall blockCollisionCheckMain, eax, edx, _UP, _ENEMYID
      test eax, eax
-     jnz .setNewDirection
-     stdcall objectMove, _ENEMYID, [enemy1.direction]
-     jmp .endd
-.setNewDirection:
+     jnz setNewDirection#ordinalNum
+     initEnemySimplified \#ordinalNum
+     stdcall objectMove, _ENEMYID, _UP, [enemyMas.enemy#ordinalNum#.cooY]
+     mov [enemyMas.enemy#ordinalNum#.cooY], eax
+     jmp endd#ordinalNum
+.down#ordinalNum:
+     cmp [enemyMas.enemy#ordinalNum#.direction], _DOWN
+     jnz .left#ordinalNum
+     add edx, ebx
+     stdcall blockCollisionCheckMain, eax, edx, _DOWN, _ENEMYID
+     test eax, eax
+     jnz setNewDirection#ordinalNum
+     initEnemySimplified \#ordinalNum
+     stdcall objectMove, _ENEMYID, _DOWN, [enemyMas.enemy#ordinalNum#.cooY]
+     mov [enemyMas.enemy#ordinalNum#.cooY], eax
+     jmp endd#ordinalNum
+.left#ordinalNum:
+     cmp [enemyMas.enemy#ordinalNum#.direction], _LEFT
+     jnz .right#ordinalNum
+     sub eax, ebx
+     stdcall blockCollisionCheckMain, eax, edx, _LEFT, _ENEMYID
+     test eax, eax
+     jnz setNewDirection#ordinalNum
+     initEnemySimplified \#ordinalNum
+     stdcall objectMove, _ENEMYID, _LEFT, [enemyMas.enemy#ordinalNum#.cooX]
+     mov [enemyMas.enemy#ordinalNum#.cooX], eax
+     jmp endd#ordinalNum
+.right#ordinalNum:
+     add eax, ebx
+     stdcall blockCollisionCheckMain, eax, edx, _RIGHT, _ENEMYID
+     test eax, eax
+     jnz setNewDirection#ordinalNum
+     initEnemySimplified \#ordinalNum
+     stdcall objectMove, _ENEMYID, _RIGHT, [enemyMas.enemy#ordinalNum#.cooX]
+     mov [enemyMas.enemy#ordinalNum#.cooX], eax
+     jmp endd#ordinalNum
+setNewDirection#ordinalNum:
      stdcall Random.Initialize
      stdcall Random.Get, 1, 4
      cmp eax, 1
      jne @f
-     mov [enemy1.direction], _UP
-     jmp .endd
+     mov [enemyMas.enemy#ordinalNum#.direction], _UP
+     jmp endd#ordinalNum
 @@:
      cmp eax, 2
      jne @f
-     mov [enemy1.direction], _DOWN
-     jmp .endd
+     mov [enemyMas.enemy#ordinalNum#.direction], _DOWN
+     jmp endd#ordinalNum
 @@:
      cmp eax, 3
      jne @f
-     mov [enemy1.direction], _LEFT
-     jmp .endd
+     mov [enemyMas.enemy#ordinalNum#.direction], _LEFT
+     jmp endd#ordinalNum
 @@:
-     mov [enemy1.direction], _RIGHT
-.endd:
+     mov [enemyMas.enemy#ordinalNum#.direction], _RIGHT
+endd#ordinalNum:
+}
+
+proc newEnemy
+     rept 4 counter{
+          cmp [enemyMas.tanksequent#counter], 1
+          je end#counter
+          initEnemy counter, 1, 3, 0, 30, _DOWN, 1, 10, 0 ;точка спауна
+          jmp newEnemy.end
+          end#counter:
+     }
+newEnemy.end:
+     ret
+endp
+
+proc moveEnemy uses ebx,\
+               elapsedTime: DWORD
+     mov eax, [elapsedTime]
+     xor edx, edx
+     mov bx, 4000 ;4 seconds
+     div bx
+     cmp dx, 30
+     ja .main
+     stdcall newEnemy
+.main:
+     rept 4 counter{enemyMain\#counter}
      ret
 endp
 
 proc Random.Initialize
         invoke GetLocalTime, st_
-        movzx eax, [st_.wSecond]
-        add ax, [st_.wMilliseconds]
+        ;movzx eax, [st_.wSecond]
+        movzx eax, [st_.wMilliseconds]
         mov [Random.wPrevNumber], eax
         ret
 endp
@@ -422,7 +513,7 @@ endp
 
 
 proc TimerProcedure, hwnd, uMsg, idEvent, dwTime: DWORD
-        stdcall moveEnemy
+        stdcall moveEnemy, [dwTime]
         stdcall bulletMove
         invoke GetKeyState,'W'
         cmp eax, 1
@@ -623,7 +714,7 @@ proc setBulletCoordinates
      ret
 endp
 
-proc borderCollisionCheck, elementid, direction ;eax = 0 - collision occured, else - 1
+proc borderCollisionCheck, elementid, direction, coox, cooy ;eax = 0 - collision occured, else - 1
 locals
  four db 4
  result dd 1
@@ -635,11 +726,11 @@ endl
         mov [width], _BLOCKWIDTH
         cmp [direction], 4
         jge @f
-        mov eax, [dst_Y]
+        mov eax, [cooy]
         mov [curposition], eax
         jmp .nextstep
 @@:
-        mov eax, [dst_X]
+        mov eax, [coox]
         mov [curposition], eax
         jmp .nextstep
 .nextid:
@@ -648,22 +739,22 @@ endl
         mov [width], _BULLETWIDTH
         cmp [direction], 4
         jge @f
-        mov eax, [bullet_Y]
+        mov eax, [cooy]
         mov [curposition], eax
         jmp .nextstep
 @@:
-        mov eax, [bullet_X]
+        mov eax, [coox]
         mov [curposition], eax
         jmp .nextstep
 .nextsecid:
         mov [width], _BLOCKWIDTH
         cmp [direction], 4
         jge @f
-        mov eax, [enemy1.cooY]
+        mov eax, [cooy]
         mov [curposition], eax
         jmp .nextstep
 @@:
-        mov eax, [enemy1.cooX]
+        mov eax, [coox]
         mov [curposition], eax
 .nextstep:
         mov eax, [direction]
@@ -720,30 +811,31 @@ endl
 .up:
      cmp [direction], _UP
      jnz .down
-     stdcall blockCollisionCheck, [ltx], [lty], _UP, [oppCornerDist]
+     stdcall blockCollisionCheck, [ltx], [lty], _UP, [oppCornerDist], [elementid]
      jmp .endCollision
 .down:
      cmp [direction], _DOWN
      jnz .left
-     stdcall blockCollisionCheck, [lbx], [lby], _DOWN, [oppCornerDist]
+     stdcall blockCollisionCheck, [lbx], [lby], _DOWN, [oppCornerDist], [elementid]
      jmp .endCollision
 .left:
      cmp [direction], _LEFT
      jnz .right
-     stdcall blockCollisionCheck, [ltx], [lty], _LEFT, [oppCornerDist]
+     stdcall blockCollisionCheck, [ltx], [lty], _LEFT, [oppCornerDist], [elementid]
      jmp .endCollision
 .right:
-     stdcall blockCollisionCheck, [rtx], [rty], _RIGHT, [oppCornerDist]
+     stdcall blockCollisionCheck, [rtx], [rty], _RIGHT, [oppCornerDist], [elementid]
 .endCollision:
      ret
 endp
 
-proc objectMove, elementid, direction
+proc objectMove, elementid, direction, coo
      cmp [elementid], _ENEMYID
      jnz .uptank
      cmp [direction], _UP
      jnz .downenemy
-     sub [enemy1.cooY], _SPEED ;must be set to [enemy1.speedx]
+     sub [coo], _SPEED ;must be set to [enemyMas.enemy1.speedx]
+     mov eax, [coo]
      jmp .endMove
 .uptank:
      cmp [elementid], _TANKID
@@ -760,7 +852,8 @@ proc objectMove, elementid, direction
 .downenemy:
      cmp [direction], _DOWN
      jnz .leftenemy
-     add [enemy1.cooY], _SPEED
+     add [coo], _SPEED
+     mov eax, [coo]
      jmp .endMove
 .downtank:
      cmp [direction], _DOWN
@@ -775,7 +868,8 @@ proc objectMove, elementid, direction
 .leftenemy:
      cmp [direction], _LEFT
      jnz .rightenemy
-     sub [enemy1.cooX], _SPEED
+     sub [coo], _SPEED
+     mov eax, [coo]
      jmp .endMove
 .lefttank:
      cmp [direction], _LEFT
@@ -788,7 +882,8 @@ proc objectMove, elementid, direction
      sub [bullet_X], _BULLETSPEED
      jmp .endMove
 .rightenemy:
-     add [enemy1.cooX], _SPEED
+     add [coo], _SPEED
+     mov eax, [coo]
      jmp .endMove
 .righttank:
      add [dst_X], _SPEED
@@ -799,7 +894,30 @@ proc objectMove, elementid, direction
      ret
 endp
 
-proc blockCollisionCheck uses ebx, x, y, destination, oppCornerDist ;returns the number of block were collapsed; fills the massive of blocks were collapsed
+proc calkEnemyBlock, row, column, destination
+locals
+ ten db 10
+ blocknumber dd ?
+endl
+     mov eax, [row]
+     mul [ten]
+     add eax, [column]
+     mov [blocknumber], eax
+
+     mov ebx, eax
+     movzx eax, byte[bufMap+ebx]
+     ;comparance with blocks
+     cmp eax, 0
+     jz .endCollision
+     mov eax, -1
+     jmp .end
+.endCollision:
+     mov eax, [blocknumber]
+.end:
+     ret
+endp
+
+proc blockCollisionCheck uses ebx, x, y, destination, oppCornerDist, elementid ;returns the number of block were collapsed; fills the massive of blocks were collapsed
 locals
  blockwidth dd _BLOCKWIDTH
  column dd 0
@@ -820,6 +938,14 @@ endl
      mov [blockCollisionCount], 1
      mov [blockWereCollapsed], eax
 @@:
+     cmp [elementid], _ENEMYID
+     jne @f
+     stdcall calkEnemyBlock, [row], [column], [destination]
+     cmp eax, -1
+     jz @f
+     mov [a], 1
+     mov [b], eax
+@@:
      cmp [destination], _DOWN
      jg @f
      xor edx, edx
@@ -837,12 +963,55 @@ endl
 .check:
      stdcall calcBlock, [row], [column], [destination]
      cmp eax, -1
-     jz .end
+     jz @f
      mov ebx, [blockCollisionCount]
      mov [blockWereCollapsed+ebx], eax
      inc [blockCollisionCount]
+@@:
+     cmp [elementid], _ENEMYID
+     jne .end
+.forenemy:
+     cmp [destination], _UP
+     jne @f
+     xor edx, edx
+     mov eax, [y]
+     add eax, [oppCornerDist]
+     div [blockwidth]
+     mov word[row], ax
+     jmp .check2
+@@:
+     cmp [destination], _DOWN
+     jne @f
+     xor edx, edx
+     mov eax, [y]
+     sub eax, [oppCornerDist]
+     div [blockwidth]
+     mov word[row], ax
+     jmp .check2
+@@:
+     cmp [destination], _LEFT
+     jne @f
+     xor edx, edx
+     mov eax, [x]
+     add eax, [oppCornerDist]
+     div [blockwidth]
+     mov word[column], ax
+     jmp .check2
+@@:
+     xor edx, edx
+     mov eax, [x]
+     sub eax, [oppCornerDist]
+     div [blockwidth]
+     mov word[column], ax
+.check2:
+     stdcall calkEnemyBlock, [row], [column], [destination]
+     cmp eax, -1
+     jz .end
+     mov ebx, [a]
+     mov [b+ebx*4], eax
+     inc [a]
 .end:
-    mov eax, [blockCollisionCount]
+     mov eax, [blockCollisionCount]
     ret
 endp
 
@@ -860,6 +1029,8 @@ endl
      movzx eax, byte[bufMap+ebx]
      ;comparance with blocks
      cmp eax, _BRICK
+     jz .endCollision
+     cmp eax, 3
      jz .endCollision
      mov eax, -1
      jmp .end
