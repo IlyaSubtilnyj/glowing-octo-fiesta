@@ -1,0 +1,2 @@
+Motion.blockCollisionCount      dd      ?
+Motion.blockWereCollapsed       dd      2       dup(?)
